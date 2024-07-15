@@ -219,7 +219,11 @@ function setupCryptorErrorEvents(cryptor: FrameCryptor) {
   cryptor.on(CryptorEvent.Error, (error) => {
     const msg: ErrorMessage = {
       kind: 'error',
-      data: { error: new Error(`${CryptorErrorReason[error.reason]}: ${error.message}`) },
+      data: {
+        participantIdentity: error.participantIdentity,
+        // this data is sent via structuredClone() which is stripping out the non-standard Error fields, so we preserve the reason in the message:
+        error: new Error(`${CryptorErrorReason[error.reason]}: ${error.message}`),
+      },
     };
     postMessage(msg);
   });

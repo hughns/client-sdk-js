@@ -244,8 +244,8 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
           this.emit(RoomEvent.ParticipantEncryptionStatusChanged, enabled, participant);
         },
       );
-      this.e2eeManager.on(EncryptionEvent.EncryptionError, (error) =>
-        this.emit(RoomEvent.EncryptionError, error),
+      this.e2eeManager.on(EncryptionEvent.EncryptionError, (error, participantIdentity) =>
+        this.emit(RoomEvent.EncryptionError, error, participantIdentity),
       );
       this.e2eeManager?.setup(this);
     }
@@ -2171,7 +2171,7 @@ export type RoomEventCallbacks = {
   signalConnected: () => void;
   recordingStatusChanged: (recording: boolean) => void;
   participantEncryptionStatusChanged: (encrypted: boolean, participant?: Participant) => void;
-  encryptionError: (error: Error) => void;
+  encryptionError: (error: Error, participantIdentity?: string) => void;
   dcBufferStatusChanged: (isLow: boolean, kind: DataPacket_Kind) => void;
   activeDeviceChanged: (kind: MediaDeviceKind, deviceId: string) => void;
 };

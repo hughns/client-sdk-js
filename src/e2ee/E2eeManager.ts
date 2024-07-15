@@ -104,7 +104,7 @@ export class E2EEManager extends (EventEmitter as new () => TypedEventEmitter<E2
     switch (kind) {
       case 'error':
         log.error(data.error.message);
-        this.emit(EncryptionEvent.EncryptionError, data.error);
+        this.emit(EncryptionEvent.EncryptionError, data.error, data.participantIdentity);
         break;
       case 'initAck':
         if (data.enabled) {

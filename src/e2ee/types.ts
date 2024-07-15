@@ -88,6 +88,7 @@ export interface RatchetMessage extends BaseMessage {
 export interface ErrorMessage extends BaseMessage {
   kind: 'error';
   data: {
+    participantIdentity?: string;
     error: Error;
   };
 }
