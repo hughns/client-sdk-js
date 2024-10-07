@@ -70,16 +70,19 @@ describe('ParticipantKeyHandler', () => {
     expect(keyHandler.hasValidKey).toBe(true);
 
     // 1
-    keyHandler.decryptionFailure();
+    keyHandler.decryptionFailure(0);
     expect(keyHandler.hasValidKey).toBe(true);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
     // 2
-    keyHandler.decryptionFailure();
+    keyHandler.decryptionFailure(0);
     expect(keyHandler.hasValidKey).toBe(true);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
     // 3
-    keyHandler.decryptionFailure();
+    keyHandler.decryptionFailure(0);
     expect(keyHandler.hasValidKey).toBe(false);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(true);
   });
 
   it('marks current key valid on encryption success', async () => {
@@ -91,14 +94,17 @@ describe('ParticipantKeyHandler', () => {
     keyHandler.setCurrentKeyIndex(10);
 
     expect(keyHandler.hasValidKey).toBe(true);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
-    keyHandler.decryptionFailure();
+    keyHandler.decryptionFailure(0);
 
     expect(keyHandler.hasValidKey).toBe(false);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(true);
 
-    keyHandler.decryptionSuccess();
+    keyHandler.decryptionSuccess(0);
 
     expect(keyHandler.hasValidKey).toBe(true);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
   });
 
   it('marks valid on new key', async () => {
@@ -110,14 +116,17 @@ describe('ParticipantKeyHandler', () => {
     keyHandler.setCurrentKeyIndex(10);
 
     expect(keyHandler.hasValidKey).toBe(true);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
-    keyHandler.decryptionFailure();
+    keyHandler.decryptionFailure(0);
 
     expect(keyHandler.hasValidKey).toBe(false);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(true);
 
     await keyHandler.setKey(await createKeyMaterialFromString('passwordA'));
 
     expect(keyHandler.hasValidKey).toBe(true);
+    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
   });
 
   it('updates currentKeyIndex on new key', async () => {
@@ -153,8 +162,9 @@ describe('ParticipantKeyHandler', () => {
     });
     expect(keyHandler.hasValidKey).toBe(true);
     for (let i = 0; i < 100; i++) {
-      keyHandler.decryptionFailure();
+      keyHandler.decryptionFailure(0);
       expect(keyHandler.hasValidKey).toBe(true);
+      expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
     }
   });
 });
