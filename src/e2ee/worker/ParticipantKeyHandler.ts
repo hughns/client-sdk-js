@@ -55,7 +55,7 @@ export class ParticipantKeyHandler extends (EventEmitter as new () => TypedEvent
   hasInvalidKeyAtIndex(keyIndex: number): boolean {
     return (
       this.keyProviderOptions.failureTolerance >= 0 &&
-      this.decryptionFailureCounts[keyIndex] >= this.keyProviderOptions.failureTolerance
+      this.decryptionFailureCounts[keyIndex] > this.keyProviderOptions.failureTolerance
     );
   }
 
