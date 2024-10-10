@@ -29,6 +29,13 @@ export class ParticipantKeyHandler extends (EventEmitter as new () => TypedEvent
 
   private participantIdentity: string;
 
+  /**
+   * true if the current key has not been marked as invalid
+   */
+  get hasValidKey(): boolean {
+    return !this.hasInvalidKeyAtIndex(this.currentKeyIndex);
+  }
+  
   constructor(participantIdentity: string, keyProviderOptions: KeyProviderOptions) {
     super();
     this.currentKeyIndex = 0;
@@ -43,15 +50,10 @@ export class ParticipantKeyHandler extends (EventEmitter as new () => TypedEvent
   }
 
   /**
-   * returns true if at least one key is valid and hasn't failed decryption more than the failure tolerance
+   * Returns true if the key at the given index is marked as invalid.
+   * 
+   * @param keyIndex the index of the key
    */
-  get hasValidKey(): boolean {
-    return this.cryptoKeyRing.some(
-      (keySet, index) =>
-        keySet && this.decryptionFailureCounts[index] < this.keyProviderOptions.failureTolerance,
-    );
-  }
-
   hasInvalidKeyAtIndex(keyIndex: number): boolean {
     return (
       this.keyProviderOptions.failureTolerance >= 0 &&
@@ -59,10 +61,16 @@ export class ParticipantKeyHandler extends (EventEmitter as new () => TypedEvent
     );
   }
 
-  decryptionFailure(keyIndex: number) {
+  /**
+   * Informs the key handler that a decryption failure occurred for an encryption key.
+   * 
+   * @param keyIndex the key index for which the failure occurred. Defaults to the current key index.
+   */
+  decryptionFailure(keyIndex: number = this.currentKeyIndex): void {
     if (this.keyProviderOptions.failureTolerance < 0) {
       return;
     }
+
     this.decryptionFailureCounts[keyIndex] += 1;
 
     if (this.decryptionFailureCounts[keyIndex] > this.keyProviderOptions.failureTolerance) {
@@ -72,15 +80,22 @@ export class ParticipantKeyHandler extends (EventEmitter as new () => TypedEvent
     }
   }
 
-  decryptionSuccess(keyIndex: number) {
+  /**
+   * Informs the key handler that a frame was successfully decrypted using an encryption key.
+   * 
+   * @param keyIndex the key index for which the success occurred. Defaults to the current key index.
+   */
+  decryptionSuccess(keyIndex: number = this.currentKeyIndex): void {
     this.resetKeyStatus(keyIndex);
   }
 
   /**
    * Call this after user initiated ratchet or a new key has been set in order to make sure to mark potentially
    * invalid keys as valid again
+   * 
+   * @param keyIndex the index of the key. Defaults to the current key index.
    */
-  resetKeyStatus(keyIndex: number): void {
+  resetKeyStatus(keyIndex?: number): void {
     if (keyIndex === undefined) {
       this.decryptionFailureCounts.fill(0);
     } else {

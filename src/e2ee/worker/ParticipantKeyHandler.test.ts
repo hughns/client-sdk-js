@@ -70,19 +70,16 @@ describe('ParticipantKeyHandler', () => {
     expect(keyHandler.hasValidKey).toBe(true);
 
     // 1
-    keyHandler.decryptionFailure(0);
+    keyHandler.decryptionFailure();
     expect(keyHandler.hasValidKey).toBe(true);
-    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
     // 2
-    keyHandler.decryptionFailure(0);
+    keyHandler.decryptionFailure();
     expect(keyHandler.hasValidKey).toBe(true);
-    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
     // 3
-    keyHandler.decryptionFailure(0);
+    keyHandler.decryptionFailure();
     expect(keyHandler.hasValidKey).toBe(false);
-    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(true);
   });
 
   it('marks current key valid on encryption success', async () => {
@@ -96,15 +93,57 @@ describe('ParticipantKeyHandler', () => {
     expect(keyHandler.hasValidKey).toBe(true);
     expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
-    keyHandler.decryptionFailure(0);
+    keyHandler.decryptionFailure();
 
     expect(keyHandler.hasValidKey).toBe(false);
-    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(true);
 
-    keyHandler.decryptionSuccess(0);
+    keyHandler.decryptionSuccess();
 
     expect(keyHandler.hasValidKey).toBe(true);
-    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
+  });
+
+  it('marks specific key invalid if more than failureTolerance failures', async () => {
+    const keyHandler = new ParticipantKeyHandler(participantIdentity, {
+      ...KEY_PROVIDER_DEFAULTS,
+      failureTolerance: 2,
+    });
+
+    // set the current key to something different from what we are testing
+    keyHandler.setCurrentKeyIndex(10);
+
+    expect(keyHandler.hasInvalidKeyAtIndex(5)).toBe(false);
+
+    // 1
+    keyHandler.decryptionFailure(5);
+    expect(keyHandler.hasInvalidKeyAtIndex(5)).toBe(false);
+
+    // 2
+    keyHandler.decryptionFailure(5);
+    expect(keyHandler.hasInvalidKeyAtIndex(5)).toBe(false);
+
+    // 3
+    keyHandler.decryptionFailure(5);
+    expect(keyHandler.hasInvalidKeyAtIndex(5)).toBe(true);
+  });
+
+  it('marks specific key valid on encryption success', async () => {
+    const keyHandler = new ParticipantKeyHandler(participantIdentity, {
+      ...KEY_PROVIDER_DEFAULTS,
+      failureTolerance: 0,
+    });
+
+    // set the current key to something different from what we are testing
+    keyHandler.setCurrentKeyIndex(10);
+
+    expect(keyHandler.hasInvalidKeyAtIndex(5)).toBe(false);
+
+    keyHandler.decryptionFailure(5);
+
+    expect(keyHandler.hasInvalidKeyAtIndex(5)).toBe(true);
+
+    keyHandler.decryptionSuccess(5);
+
+    expect(keyHandler.hasInvalidKeyAtIndex(5)).toBe(false);
   });
 
   it('marks valid on new key', async () => {
@@ -118,15 +157,13 @@ describe('ParticipantKeyHandler', () => {
     expect(keyHandler.hasValidKey).toBe(true);
     expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
 
-    keyHandler.decryptionFailure(0);
+    keyHandler.decryptionFailure();
 
     expect(keyHandler.hasValidKey).toBe(false);
-    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(true);
 
     await keyHandler.setKey(await createKeyMaterialFromString('passwordA'));
 
     expect(keyHandler.hasValidKey).toBe(true);
-    expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
   });
 
   it('updates currentKeyIndex on new key', async () => {
@@ -162,9 +199,8 @@ describe('ParticipantKeyHandler', () => {
     });
     expect(keyHandler.hasValidKey).toBe(true);
     for (let i = 0; i < 100; i++) {
-      keyHandler.decryptionFailure(0);
+      keyHandler.decryptionFailure();
       expect(keyHandler.hasValidKey).toBe(true);
-      expect(keyHandler.hasInvalidKeyAtIndex(0)).toBe(false);
     }
   });
 });
