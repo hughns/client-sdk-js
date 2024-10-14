@@ -1,5 +1,15 @@
 # Change Log
 
+## 2.5.9
+
+### Patch Changes
+
+- Use happy-dom for testing instead of jsdom - [#1283](https://github.com/livekit/client-sdk-js/pull/1283) ([@hughns](https://github.com/hughns))
+
+- Fix attribute deletion - [#1285](https://github.com/livekit/client-sdk-js/pull/1285) ([@lukasIO](https://github.com/lukasIO))
+
+- [e2ee] await key update before emitting key ratchet event - [#1288](https://github.com/livekit/client-sdk-js/pull/1288) ([@hughns](https://github.com/hughns))
+
 ## 2.5.8
 
 ### Patch Changes
