@@ -2,4 +2,4 @@
 "livekit-client": patch
 ---
 
-Add metrics support
+Fix attribute deletion
