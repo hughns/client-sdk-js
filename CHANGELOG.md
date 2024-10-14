@@ -1,5 +1,11 @@
 # Change Log
 
+## 2.5.9
+
+### Patch Changes
+
+- Use happy-dom for testing instead of jsdom - [#1283](https://github.com/livekit/client-sdk-js/pull/1283) ([@hughns](https://github.com/hughns))
+
 ## 2.5.8
 
 ### Patch Changes
