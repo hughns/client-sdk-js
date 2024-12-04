@@ -1,3 +1,4 @@
+import { Mutex } from '@livekit/mutex';
 import {
   AddTrackRequest,
   AudioTrackFeature,
@@ -42,7 +43,7 @@ import log, { LoggerNames, getLogger } from '../logger';
 import { ConnectionError, ConnectionErrorReason } from '../room/errors';
 import CriticalTimers from '../room/timers';
 import type { LoggerOptions } from '../room/types';
-import { Mutex, getClientInfo, isReactNative, sleep, toWebsocketUrl } from '../room/utils';
+import { getClientInfo, isReactNative, sleep, toWebsocketUrl } from '../room/utils';
 import { AsyncQueue } from '../utils/AsyncQueue';
 
 // internal options
@@ -271,12 +272,22 @@ export class SignalClient {
         const abortHandler = async () => {
           this.close();
           clearTimeout(wsTimeout);
-          reject(new ConnectionError('room connection has been cancelled (signal)'));
+          reject(
+            new ConnectionError(
+              'room connection has been cancelled (signal)',
+              ConnectionErrorReason.Cancelled,
+            ),
+          );
         };
 
         const wsTimeout = setTimeout(() => {
           this.close();
-          reject(new ConnectionError('room connection has timed out (signal)'));
+          reject(
+            new ConnectionError(
+              'room connection has timed out (signal)',
+              ConnectionErrorReason.ServerUnreachable,
+            ),
+          );
         }, opts.websocketTimeout);
 
         if (abortSignal?.aborted) {
@@ -383,6 +394,8 @@ export class SignalClient {
                 new ConnectionError(
                   'Received leave request while trying to (re)connect',
                   ConnectionErrorReason.LeaveRequest,
+                  undefined,
+                  resp.message.value.reason,
                 ),
               );
             } else if (!opts.reconnect) {
@@ -390,6 +403,7 @@ export class SignalClient {
               reject(
                 new ConnectionError(
                   `did not receive join response, got ${resp.message?.case} instead`,
+                  ConnectionErrorReason.InternalError,
                 ),
               );
             }
@@ -406,7 +420,12 @@ export class SignalClient {
 
         this.ws.onclose = (ev: CloseEvent) => {
           if (this.isEstablishingConnection) {
-            reject(new ConnectionError('Websocket got closed during a (re)connection attempt'));
+            reject(
+              new ConnectionError(
+                'Websocket got closed during a (re)connection attempt',
+                ConnectionErrorReason.InternalError,
+              ),
+            );
           }
 
           this.log.warn(`websocket closed`, {

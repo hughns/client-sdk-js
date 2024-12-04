@@ -1,5 +1,91 @@
 # Change Log
 
+## 2.7.3
+
+### Patch Changes
+
+- Only wait for publications that are pending already - [#1339](https://github.com/livekit/client-sdk-js/pull/1339) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.7.2
+
+### Patch Changes
+
+- Fix blocking main thread on parallel publishing requests - [#1336](https://github.com/livekit/client-sdk-js/pull/1336) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.7.1
+
+### Patch Changes
+
+- Fix processor passing in CreateLocalTracks options - [#1329](https://github.com/livekit/client-sdk-js/pull/1329) ([@lukasIO](https://github.com/lukasIO))
+
+- Await pending publications with timeout - [#1324](https://github.com/livekit/client-sdk-js/pull/1324) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.7.0
+
+### Minor Changes
+
+- Add support for detecting video element visibility in Document PiP (can be tested on the examples/demo) - [#1325](https://github.com/livekit/client-sdk-js/pull/1325) ([@davideberlein](https://github.com/davideberlein))
+
+### Patch Changes
+
+- Expose `ReconnectContext` and `ReconnectPolicy`, for use in custom reconnection implementations. - [#1328](https://github.com/livekit/client-sdk-js/pull/1328) ([@wuhkuh](https://github.com/wuhkuh))
+
+## 2.6.3
+
+### Patch Changes
+
+- Add voiceIsolation constraint to AudioCaptureOptions - [#1320](https://github.com/livekit/client-sdk-js/pull/1320) ([@lukasIO](https://github.com/lukasIO))
+
+- Forward disconnect reason on leave requests and ConnectionErrors - [#1323](https://github.com/livekit/client-sdk-js/pull/1323) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.6.2
+
+### Patch Changes
+
+- Use capturing mediastreamtrack settings for audio feature detection - [#1318](https://github.com/livekit/client-sdk-js/pull/1318) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.6.1
+
+### Patch Changes
+
+- Add ConnectionErrorReason when cancelling ongoing connection attempt - [#1315](https://github.com/livekit/client-sdk-js/pull/1315) ([@lukasIO](https://github.com/lukasIO))
+
+- Make Remote Tracks `getSenderStats` method public - [#1309](https://github.com/livekit/client-sdk-js/pull/1309) ([@mpnri](https://github.com/mpnri))
+
+## 2.6.0
+
+### Minor Changes
+
+- Add RPC feature support - [#1282](https://github.com/livekit/client-sdk-js/pull/1282) ([@bcherry](https://github.com/bcherry))
+
+### Patch Changes
+
+- fix: mimeTypeToVideoCodecString should not throw - [#1302](https://github.com/livekit/client-sdk-js/pull/1302) ([@davidzhao](https://github.com/davidzhao))
+
+- Keep dd extension id in the session - [#1297](https://github.com/livekit/client-sdk-js/pull/1297) ([@cnderrauber](https://github.com/cnderrauber))
+
+## 2.5.10
+
+### Patch Changes
+
+- Reset `joinAttempts` when closing RTCEngine - [#1291](https://github.com/livekit/client-sdk-js/pull/1291) ([@mpnri](https://github.com/mpnri))
+
+- Increase default audio bitrates - [#1295](https://github.com/livekit/client-sdk-js/pull/1295) ([@davidzhao](https://github.com/davidzhao))
+
+- Use shared mutex helper package - [#1289](https://github.com/livekit/client-sdk-js/pull/1289) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.5.9
+
+### Patch Changes
+
+- Track E2EE key validity on a per index basis - [#1284](https://github.com/livekit/client-sdk-js/pull/1284) ([@hughns](https://github.com/hughns))
+
+- Use happy-dom for testing instead of jsdom - [#1283](https://github.com/livekit/client-sdk-js/pull/1283) ([@hughns](https://github.com/hughns))
+
+- Fix attribute deletion - [#1285](https://github.com/livekit/client-sdk-js/pull/1285) ([@lukasIO](https://github.com/lukasIO))
+
+- [e2ee] await key update before emitting key ratchet event - [#1288](https://github.com/livekit/client-sdk-js/pull/1288) ([@hughns](https://github.com/hughns))
+
 ## 2.5.8
 
 ### Patch Changes

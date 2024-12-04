@@ -247,6 +247,14 @@ export interface AudioCaptureOptions {
   noiseSuppression?: ConstrainBoolean;
 
   /**
+   * @experimental
+   * a stronger version of 'noiseSuppression', browser support is not widespread yet.
+   * If this is set (and supported) the value for 'noiseSuppression' will be ignored
+   * @see https://w3c.github.io/mediacapture-extensions/#voiceisolation-constraint
+   */
+  voiceIsolation?: ConstrainBoolean;
+
+  /**
    * the sample rate or range of sample rates which are acceptable and/or required.
    */
   sampleRate?: ConstrainULong;
@@ -398,19 +406,19 @@ export namespace AudioPresets {
     maxBitrate: 12_000,
   };
   export const speech: AudioPreset = {
-    maxBitrate: 20_000,
+    maxBitrate: 24_000,
   };
   export const music: AudioPreset = {
-    maxBitrate: 32_000,
-  };
-  export const musicStereo: AudioPreset = {
     maxBitrate: 48_000,
   };
-  export const musicHighQuality: AudioPreset = {
+  export const musicStereo: AudioPreset = {
     maxBitrate: 64_000,
   };
-  export const musicHighQualityStereo: AudioPreset = {
+  export const musicHighQuality: AudioPreset = {
     maxBitrate: 96_000,
+  };
+  export const musicHighQualityStereo: AudioPreset = {
+    maxBitrate: 128_000,
   };
 }
 

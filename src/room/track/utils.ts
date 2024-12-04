@@ -1,4 +1,5 @@
 import { TrackPublishedResponse } from '@livekit/protocol';
+import type { AudioProcessorOptions, TrackProcessor, VideoProcessorOptions } from '../..';
 import { cloneDeep } from '../../utils/cloneDeep';
 import { isSafari, sleep } from '../utils';
 import { Track } from './Track';
@@ -9,7 +10,6 @@ import {
   type ScreenShareCaptureOptions,
   type VideoCaptureOptions,
   type VideoCodec,
-  videoCodecs,
 } from './options';
 import type { AudioTrack } from './types';
 
@@ -18,24 +18,33 @@ export function mergeDefaultOptions(
   audioDefaults?: AudioCaptureOptions,
   videoDefaults?: VideoCaptureOptions,
 ): CreateLocalTracksOptions {
-  const opts: CreateLocalTracksOptions = cloneDeep(options) ?? {};
-  if (opts.audio === true) opts.audio = {};
-  if (opts.video === true) opts.video = {};
+  const { optionsWithoutProcessor, audioProcessor, videoProcessor } = extractProcessorsFromOptions(
+    options ?? {},
+  );
+  const clonedOptions: CreateLocalTracksOptions = cloneDeep(optionsWithoutProcessor) ?? {};
+  if (clonedOptions.audio === true) clonedOptions.audio = {};
+  if (clonedOptions.video === true) clonedOptions.video = {};
 
   // use defaults
-  if (opts.audio) {
+  if (clonedOptions.audio) {
     mergeObjectWithoutOverwriting(
-      opts.audio as Record<string, unknown>,
+      clonedOptions.audio as Record<string, unknown>,
       audioDefaults as Record<string, unknown>,
     );
+    if (audioProcessor) {
+      clonedOptions.audio.processor = audioProcessor;
+    }
   }
-  if (opts.video) {
+  if (clonedOptions.video) {
     mergeObjectWithoutOverwriting(
-      opts.video as Record<string, unknown>,
+      clonedOptions.video as Record<string, unknown>,
       videoDefaults as Record<string, unknown>,
     );
+    if (videoProcessor) {
+      clonedOptions.video.processor = videoProcessor;
+    }
   }
-  return opts;
+  return clonedOptions;
 }
 
 function mergeObjectWithoutOverwriting(
@@ -188,11 +197,7 @@ export function screenCaptureToDisplayMediaStreamOptions(
 }
 
 export function mimeTypeToVideoCodecString(mimeType: string) {
-  const codec = mimeType.split('/')[1].toLowerCase() as VideoCodec;
-  if (!videoCodecs.includes(codec)) {
-    throw Error(`Video codec not supported: ${codec}`);
-  }
-  return codec;
+  return mimeType.split('/')[1].toLowerCase() as VideoCodec;
 }
 
 export function getTrackPublicationInfo<T extends TrackPublication>(
@@ -264,4 +269,22 @@ export function diffAttributes(
   }
 
   return diff;
+}
+
+/** @internal */
+export function extractProcessorsFromOptions(options: CreateLocalTracksOptions) {
+  const newOptions = { ...options };
+  let audioProcessor: TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> | undefined;
+  let videoProcessor: TrackProcessor<Track.Kind.Video, VideoProcessorOptions> | undefined;
+
+  if (typeof newOptions.audio === 'object' && newOptions.audio.processor) {
+    audioProcessor = newOptions.audio.processor;
+    newOptions.audio = { ...newOptions.audio, processor: undefined };
+  }
+  if (typeof newOptions.video === 'object' && newOptions.video.processor) {
+    videoProcessor = newOptions.video.processor;
+    newOptions.video = { ...newOptions.video, processor: undefined };
+  }
+
+  return { audioProcessor, videoProcessor, optionsWithoutProcessor: newOptions };
 }

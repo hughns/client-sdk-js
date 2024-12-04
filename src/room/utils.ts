@@ -2,10 +2,12 @@ import {
   ChatMessage as ChatMessageModel,
   ClientInfo,
   ClientInfo_SDK,
+  DisconnectReason,
   Transcription as TranscriptionModel,
 } from '@livekit/protocol';
 import { getBrowser } from '../utils/browserParser';
 import { protocolVersion, version } from '../version';
+import { type ConnectionError, ConnectionErrorReason } from './errors';
 import CriticalTimers from './timers';
 import type LocalAudioTrack from './track/LocalAudioTrack';
 import type RemoteAudioTrack from './track/RemoteAudioTrack';
@@ -454,44 +456,6 @@ export function createAudioAnalyser(
   return { calculateVolume, analyser, cleanup };
 }
 
-/**
- * @internal
- */
-export class Mutex {
-  private _locking: Promise<void>;
-
-  private _locks: number;
-
-  constructor() {
-    this._locking = Promise.resolve();
-    this._locks = 0;
-  }
-
-  isLocked() {
-    return this._locks > 0;
-  }
-
-  lock() {
-    this._locks += 1;
-
-    let unlockNext: () => void;
-
-    const willLock = new Promise<void>(
-      (resolve) =>
-        (unlockNext = () => {
-          this._locks -= 1;
-          resolve();
-        }),
-    );
-
-    const willUnlock = this._locking.then(() => unlockNext);
-
-    this._locking = this._locking.then(() => willLock);
-
-    return willUnlock;
-  }
-}
-
 export function isVideoCodec(maybeCodec: string): maybeCodec is VideoCodec {
   return videoCodecs.includes(maybeCodec as VideoCodec);
 }
@@ -568,4 +532,19 @@ export function extractChatMessage(msg: ChatMessageModel): ChatMessage {
     editTimestamp: editTimestamp ? Number.parseInt(editTimestamp.toString()) : undefined,
     message,
   };
+}
+
+export function getDisconnectReasonFromConnectionError(e: ConnectionError) {
+  switch (e.reason) {
+    case ConnectionErrorReason.LeaveRequest:
+      return e.context as DisconnectReason;
+    case ConnectionErrorReason.Cancelled:
+      return DisconnectReason.CLIENT_INITIATED;
+    case ConnectionErrorReason.NotAllowed:
+      return DisconnectReason.USER_REJECTED;
+    case ConnectionErrorReason.ServerUnreachable:
+      return DisconnectReason.JOIN_FAILURE;
+    default:
+      return DisconnectReason.UNKNOWN_REASON;
+  }
 }

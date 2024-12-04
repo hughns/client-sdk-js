@@ -1,6 +1,8 @@
+import { Mutex } from '@livekit/mutex';
 import { DataPacket_Kind, DisconnectReason, SubscriptionError } from '@livekit/protocol';
 import { LogLevel, LoggerNames, getLogger, setLogExtension, setLogLevel } from './logger';
 import DefaultReconnectPolicy from './room/DefaultReconnectPolicy';
+import type { ReconnectContext, ReconnectPolicy } from './room/ReconnectPolicy';
 import Room, { ConnectionState } from './room/Room';
 import LocalParticipant from './room/participant/LocalParticipant';
 import Participant, { ConnectionQuality, ParticipantKind } from './room/participant/Participant';
@@ -26,7 +28,6 @@ import { TrackPublication } from './room/track/TrackPublication';
 import type { LiveKitReactNativeInfo } from './room/types';
 import type { AudioAnalyserOptions } from './room/utils';
 import {
-  Mutex,
   compareVersions,
   createAudioAnalyser,
   getEmptyAudioStreamTrack,
@@ -38,6 +39,8 @@ import {
   supportsVP9,
 } from './room/utils';
 import { getBrowser } from './utils/browserParser';
+
+export { RpcError, type RpcInvocationData, type PerformRpcParams } from './room/rpc';
 
 export * from './connectionHelper/ConnectionCheck';
 export * from './connectionHelper/checks/Checker';
@@ -106,4 +109,6 @@ export type {
   AudioSenderStats,
   VideoReceiverStats,
   VideoSenderStats,
+  ReconnectContext,
+  ReconnectPolicy,
 };

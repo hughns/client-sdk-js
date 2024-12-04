@@ -1,6 +1,6 @@
 {
   "name": "livekit-client",
-  "version": "2.5.8",
+  "version": "2.7.3",
   "description": "JavaScript/TypeScript client SDK for LiveKit",
   "main": "./dist/livekit-client.umd.js",
   "unpkg": "./dist/livekit-client.umd.js",
@@ -39,7 +39,7 @@
     "build": "rollup --config --bundleConfigAsCjs && rollup --config rollup.config.worker.js --bundleConfigAsCjs && pnpm downlevel-dts",
     "build:watch": "rollup --watch --config --bundleConfigAsCjs",
     "build:worker:watch": "rollup --watch --config rollup.config.worker.js --bundleConfigAsCjs",
-    "build-docs": "typedoc",
+    "build-docs": "typedoc && mkdir -p docs/assets/github && cp .github/*.png docs/assets/github/ && find docs -name '*.html' -type f -exec sed -i.bak 's|=\"/.github/|=\"assets/github/|g' {} + && find docs -name '*.bak' -delete",
     "proto": "protoc --es_out src/proto --es_opt target=ts -I./protocol ./protocol/livekit_rtc.proto ./protocol/livekit_models.proto",
     "examples:demo": "vite examples/demo -c vite.config.mjs",
     "lint": "eslint src",
@@ -53,7 +53,8 @@
     "size-limit": "size-limit"
   },
   "dependencies": {
-    "@livekit/protocol": "1.24.0",
+    "@livekit/mutex": "1.0.0",
+    "@livekit/protocol": "1.29.3",
     "events": "^3.3.0",
     "loglevel": "^1.8.0",
     "sdp-transform": "^2.14.1",
