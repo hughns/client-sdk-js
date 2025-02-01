@@ -64,7 +64,14 @@ import type { Track } from './track/Track';
 import type { TrackPublishOptions, VideoCodec } from './track/options';
 import { getTrackPublicationInfo } from './track/utils';
 import type { LoggerOptions } from './types';
-import { isVideoCodec, isWeb, sleep, supportsAddTrack, supportsTransceiver } from './utils';
+import {
+  isVideoCodec,
+  isVideoTrack,
+  isWeb,
+  sleep,
+  supportsAddTrack,
+  supportsTransceiver,
+} from './utils';
 
 const lossyDataChannel = '_lossy';
 const reliableDataChannel = '_reliable';
@@ -745,7 +752,7 @@ export default class RTCEngine extends (EventEmitter as new () => TypedEventEmit
       streams.push(track.mediaStream);
     }
 
-    if (track instanceof LocalVideoTrack) {
+    if (isVideoTrack(track)) {
       track.codec = opts.videoCodec;
     }
 
@@ -1118,6 +1125,22 @@ export default class RTCEngine extends (EventEmitter as new () => TypedEventEmit
       return dc.bufferedAmount <= dc.bufferedAmountLowThreshold;
     }
   };
+
+  waitForBufferStatusLow(kind: DataPacket_Kind): Promise<void> {
+    return new Promise(async (resolve, reject) => {
+      if (this.isBufferStatusLow(kind)) {
+        resolve();
+      } else {
+        const onClosing = () => reject('Engine closed');
+        this.once(EngineEvent.Closing, onClosing);
+        while (!this.dcBufferStatus.get(kind)) {
+          await sleep(10);
+        }
+        this.off(EngineEvent.Closing, onClosing);
+        resolve();
+      }
+    });
+  }
 
   /**
    * @internal

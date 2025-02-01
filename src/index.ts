@@ -1,5 +1,5 @@
 import { Mutex } from '@livekit/mutex';
-import { DataPacket_Kind, DisconnectReason, SubscriptionError } from '@livekit/protocol';
+import { DataPacket_Kind, DisconnectReason, SubscriptionError, TrackType } from '@livekit/protocol';
 import { LogLevel, LoggerNames, getLogger, setLogExtension, setLogLevel } from './logger';
 import DefaultReconnectPolicy from './room/DefaultReconnectPolicy';
 import type { ReconnectContext, ReconnectPolicy } from './room/ReconnectPolicy';
@@ -32,7 +32,13 @@ import {
   createAudioAnalyser,
   getEmptyAudioStreamTrack,
   getEmptyVideoStreamTrack,
+  isAudioTrack,
   isBrowserSupported,
+  isLocalParticipant,
+  isLocalTrack,
+  isRemoteParticipant,
+  isRemoteTrack,
+  isVideoTrack,
   supportsAV1,
   supportsAdaptiveStream,
   supportsDynacast,
@@ -45,6 +51,7 @@ export { RpcError, type RpcInvocationData, type PerformRpcParams } from './room/
 export * from './connectionHelper/ConnectionCheck';
 export * from './connectionHelper/checks/Checker';
 export * from './e2ee';
+export type { BaseE2EEManager } from './e2ee/E2eeManager';
 export * from './options';
 export * from './room/errors';
 export * from './room/events';
@@ -59,6 +66,7 @@ export type {
   SimulationScenario,
   TranscriptionSegment,
   ChatMessage,
+  SendTextOptions,
 } from './room/types';
 export * from './version';
 export {
@@ -99,6 +107,12 @@ export {
   supportsDynacast,
   supportsVP9,
   Mutex,
+  isAudioTrack,
+  isLocalTrack,
+  isRemoteTrack,
+  isVideoTrack,
+  isLocalParticipant,
+  isRemoteParticipant,
 };
 export type {
   AudioAnalyserOptions,
@@ -111,4 +125,5 @@ export type {
   VideoSenderStats,
   ReconnectContext,
   ReconnectPolicy,
+  TrackType,
 };

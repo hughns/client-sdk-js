@@ -1,5 +1,45 @@
 # Change Log
 
+## 2.8.1
+
+### Patch Changes
+
+- expose inbound-rtp.id as streamId - [#1367](https://github.com/livekit/client-sdk-js/pull/1367) ([@s-hamdananwar](https://github.com/s-hamdananwar))
+
+- Emit ActiveDeviceChanged event also for audio-output - [#1372](https://github.com/livekit/client-sdk-js/pull/1372) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.8.0
+
+### Minor Changes
+
+- Improve default device handling - [#1357](https://github.com/livekit/client-sdk-js/pull/1357) ([@lukasIO](https://github.com/lukasIO))
+
+### Patch Changes
+
+- Ensure maxFps applies for very low framerates - [#1362](https://github.com/livekit/client-sdk-js/pull/1362) ([@lukasIO](https://github.com/lukasIO))
+
+- Emit MediaDeviceError only when acquiring tracks fails - [#1365](https://github.com/livekit/client-sdk-js/pull/1365) ([@lukasIO](https://github.com/lukasIO))
+
+## 2.7.5
+
+### Patch Changes
+
+- fix(deps): update dependency @livekit/protocol to v1.29.4 - [#1352](https://github.com/livekit/client-sdk-js/pull/1352) ([@renovate](https://github.com/apps/renovate))
+
+## 2.7.4
+
+### Patch Changes
+
+- Support swapping out the E2EEManager for react-native - [#1345](https://github.com/livekit/client-sdk-js/pull/1345) ([@davidliu](https://github.com/davidliu))
+
+- fix: prevent monitoring leak when stopOnUnpublish is false - [#1348](https://github.com/livekit/client-sdk-js/pull/1348) ([@davidzhao](https://github.com/davidzhao))
+
+- Prevent undefined access to engine in connection reconciler - [#1349](https://github.com/livekit/client-sdk-js/pull/1349) ([@lukasIO](https://github.com/lukasIO))
+
+- Fix sdp connection address mismatch - [#1342](https://github.com/livekit/client-sdk-js/pull/1342) ([@cnderrauber](https://github.com/cnderrauber))
+
+- Set participant attributes as soon as possible, making them available in all related events - [#1344](https://github.com/livekit/client-sdk-js/pull/1344) ([@holzgeist](https://github.com/holzgeist))
+
 ## 2.7.3
 
 ### Patch Changes

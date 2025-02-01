@@ -16,6 +16,7 @@ import type { AudioOutputOptions } from '../track/options';
 import type { AdaptiveStreamSettings } from '../track/types';
 import { getLogContextFromTrack } from '../track/utils';
 import type { LoggerOptions } from '../types';
+import { isAudioTrack, isRemoteTrack } from '../utils';
 import Participant, { ParticipantKind } from './Participant';
 import type { ParticipantEventCallbacks } from './Participant';
 
@@ -44,6 +45,7 @@ export default class RemoteParticipant extends Participant {
       pi.identity,
       pi.name,
       pi.metadata,
+      pi.attributes,
       loggerOptions,
       pi.kind,
     );
@@ -64,10 +66,11 @@ export default class RemoteParticipant extends Participant {
     identity?: string,
     name?: string,
     metadata?: string,
+    attributes?: Record<string, string>,
     loggerOptions?: LoggerOptions,
     kind: ParticipantKind = ParticipantKind.STANDARD,
   ) {
-    super(sid, identity || '', name, metadata, loggerOptions, kind);
+    super(sid, identity || '', name, metadata, attributes, loggerOptions, kind);
     this.signalClient = signalClient;
     this.trackPublications = new Map();
     this.audioTrackPublications = new Map();
@@ -237,7 +240,7 @@ export default class RemoteParticipant extends Participant {
 
     publication.setTrack(track);
     // set participant volumes on new audio tracks
-    if (this.volumeMap.has(publication.source) && track instanceof RemoteAudioTrack) {
+    if (this.volumeMap.has(publication.source) && isRemoteTrack(track) && isAudioTrack(track)) {
       track.setVolume(this.volumeMap.get(publication.source)!);
     }
 
@@ -365,7 +368,7 @@ export default class RemoteParticipant extends Participant {
     this.audioOutput = output;
     const promises: Promise<void>[] = [];
     this.audioTrackPublications.forEach((pub) => {
-      if (pub.track instanceof RemoteAudioTrack) {
+      if (isAudioTrack(pub.track) && isRemoteTrack(pub.track)) {
         promises.push(pub.track.setSinkId(output.deviceId ?? 'default'));
       }
     });

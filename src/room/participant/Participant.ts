@@ -11,15 +11,14 @@ import { EventEmitter } from 'events';
 import type TypedEmitter from 'typed-emitter';
 import log, { LoggerNames, type StructuredLogger, getLogger } from '../../logger';
 import { ParticipantEvent, TrackEvent } from '../events';
-import LocalAudioTrack from '../track/LocalAudioTrack';
 import type LocalTrackPublication from '../track/LocalTrackPublication';
-import RemoteAudioTrack from '../track/RemoteAudioTrack';
 import type RemoteTrack from '../track/RemoteTrack';
 import type RemoteTrackPublication from '../track/RemoteTrackPublication';
 import { Track } from '../track/Track';
 import type { TrackPublication } from '../track/TrackPublication';
 import { diffAttributes } from '../track/utils';
 import type { ChatMessage, LoggerOptions, TranscriptionSegment } from '../types';
+import { isAudioTrack } from '../utils';
 
 export enum ConnectionQuality {
   Excellent = 'excellent',
@@ -126,6 +125,7 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
     identity: string,
     name?: string,
     metadata?: string,
+    attributes?: Record<string, string>,
     loggerOptions?: LoggerOptions,
     kind: ParticipantKind = ParticipantKind.STANDARD,
   ) {
@@ -143,7 +143,7 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
     this.videoTrackPublications = new Map();
     this.trackPublications = new Map();
     this._kind = kind;
-    this._attributes = {};
+    this._attributes = attributes ?? {};
   }
 
   getTrackPublications(): TrackPublication[] {
@@ -316,9 +316,7 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
   setAudioContext(ctx: AudioContext | undefined) {
     this.audioContext = ctx;
     this.audioTrackPublications.forEach(
-      (track) =>
-        (track.track instanceof RemoteAudioTrack || track.track instanceof LocalAudioTrack) &&
-        track.track.setAudioContext(ctx),
+      (track) => isAudioTrack(track.track) && track.track.setAudioContext(ctx),
     );
   }
 

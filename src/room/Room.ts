@@ -4,6 +4,9 @@ import {
   ConnectionQualityUpdate,
   type DataPacket,
   DataPacket_Kind,
+  DataStream_Chunk,
+  DataStream_Header,
+  DataStream_Trailer,
   DisconnectReason,
   JoinResponse,
   LeaveRequest,
@@ -33,7 +36,7 @@ import { EventEmitter } from 'events';
 import type TypedEmitter from 'typed-emitter';
 import 'webrtc-adapter';
 import { EncryptionEvent } from '../e2ee';
-import { E2EEManager } from '../e2ee/E2eeManager';
+import { type BaseE2EEManager, E2EEManager } from '../e2ee/E2eeManager';
 import log, { LoggerNames, getLogger } from '../logger';
 import type {
   InternalRoomConnectOptions,
@@ -45,6 +48,12 @@ import { getBrowser } from '../utils/browserParser';
 import DeviceManager from './DeviceManager';
 import RTCEngine from './RTCEngine';
 import { RegionUrlProvider } from './RegionUrlProvider';
+import {
+  type ByteStreamHandler,
+  ByteStreamReader,
+  type TextStreamHandler,
+  TextStreamReader,
+} from './StreamReader';
 import {
   audioDefaults,
   publishDefaults,
@@ -70,14 +79,18 @@ import type { TrackPublication } from './track/TrackPublication';
 import type { TrackProcessor } from './track/processor/types';
 import type { AdaptiveStreamSettings } from './track/types';
 import { getNewAudioContext, sourceToKind } from './track/utils';
-import type {
-  ChatMessage,
-  SimulationOptions,
-  SimulationScenario,
-  TranscriptionSegment,
+import {
+  type ByteStreamInfo,
+  type ChatMessage,
+  type SimulationOptions,
+  type SimulationScenario,
+  type StreamController,
+  type TextStreamInfo,
+  type TranscriptionSegment,
 } from './types';
 import {
   Future,
+  bigIntToNumber,
   createDummyVideoStreamTrack,
   extractChatMessage,
   extractTranscriptionSegments,
@@ -85,8 +98,14 @@ import {
   getEmptyAudioStreamTrack,
   isBrowserSupported,
   isCloud,
+  isLocalAudioTrack,
+  isLocalParticipant,
   isReactNative,
+  isRemotePub,
+  isSafari,
   isWeb,
+  numberToBigInt,
+  sleep,
   supportsSetSinkId,
   toHttpUrl,
   unpackStreamId,
@@ -158,7 +177,7 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
 
   private disconnectLock: Mutex;
 
-  private e2eeManager: E2EEManager | undefined;
+  private e2eeManager: BaseE2EEManager | undefined;
 
   private connectionReconcileInterval?: ReturnType<typeof setInterval>;
 
@@ -178,6 +197,14 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
    * map to store first point in time when a particular transcription segment was received
    */
   private transcriptionReceivedTimes: Map<string, number>;
+
+  private byteStreamControllers = new Map<string, StreamController<DataStream_Chunk>>();
+
+  private textStreamControllers = new Map<string, StreamController<DataStream_Chunk>>();
+
+  private byteStreamHandlers = new Map<string, ByteStreamHandler>();
+
+  private textStreamHandlers = new Map<string, TextStreamHandler>();
 
   /**
    * Creates a new Room, the primary construct for a LiveKit session.
@@ -234,6 +261,43 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
     if (this.options.e2ee) {
       this.setupE2EE();
     }
+
+    if (isWeb()) {
+      const abortController = new AbortController();
+
+      // in order to catch device changes prior to room connection we need to register the event in the constructor
+      navigator.mediaDevices?.addEventListener('devicechange', this.handleDeviceChange, {
+        signal: abortController.signal,
+      });
+
+      if (Room.cleanupRegistry) {
+        Room.cleanupRegistry.register(this, () => {
+          abortController.abort();
+        });
+      }
+    }
+  }
+
+  registerTextStreamHandler(topic: string, callback: TextStreamHandler) {
+    if (this.textStreamHandlers.has(topic)) {
+      throw new TypeError(`A text stream handler for topic "${topic}" has already been set.`);
+    }
+    this.textStreamHandlers.set(topic, callback);
+  }
+
+  unregisterTextStreamHandler(topic: string) {
+    this.textStreamHandlers.delete(topic);
+  }
+
+  registerByteStreamHandler(topic: string, callback: ByteStreamHandler) {
+    if (this.byteStreamHandlers.has(topic)) {
+      throw new TypeError(`A byte stream handler for topic "${topic}" has already been set.`);
+    }
+    this.byteStreamHandlers.set(topic, callback);
+  }
+
+  unregisterByteStreamHandler(topic: string) {
+    this.byteStreamHandlers.delete(topic);
   }
 
   /**
@@ -252,11 +316,15 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
 
   private setupE2EE() {
     if (this.options.e2ee) {
-      this.e2eeManager = new E2EEManager(this.options.e2ee);
+      if ('e2eeManager' in this.options.e2ee) {
+        this.e2eeManager = this.options.e2ee.e2eeManager;
+      } else {
+        this.e2eeManager = new E2EEManager(this.options.e2ee);
+      }
       this.e2eeManager.on(
         EncryptionEvent.ParticipantEncryptionStatusChanged,
         (enabled, participant) => {
-          if (participant instanceof LocalParticipant) {
+          if (isLocalParticipant(participant)) {
             this.isE2EEEnabled = enabled;
           }
           this.emit(RoomEvent.ParticipantEncryptionStatusChanged, enabled, participant);
@@ -429,6 +497,12 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
   ): Promise<MediaDeviceInfo[]> {
     return DeviceManager.getInstance().getDevices(kind, requestPermissions);
   }
+
+  static cleanupRegistry =
+    typeof FinalizationRegistry !== 'undefined' &&
+    new FinalizationRegistry((cleanup: () => void) => {
+      cleanup();
+    });
 
   /**
    * prepareConnection should be called as soon as the page is loaded, in order
@@ -765,7 +839,6 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
     }
     if (isWeb()) {
       document.addEventListener('freeze', this.onPageLeave);
-      navigator.mediaDevices?.addEventListener('devicechange', this.handleDeviceChange);
     }
     this.setAndEmitConnectionState(ConnectionState.Connected);
     this.emit(RoomEvent.Connected);
@@ -935,7 +1008,7 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
         req = new SimulateScenario({
           scenario: {
             case: 'subscriberBandwidth',
-            value: BigInt(arg),
+            value: numberToBigInt(arg),
           },
         });
         break;
@@ -1093,14 +1166,14 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
    * @param deviceId
    */
   async switchActiveDevice(kind: MediaDeviceKind, deviceId: string, exact: boolean = false) {
-    let deviceHasChanged = false;
     let success = true;
+    let needsUpdateWithoutTracks = false;
     const deviceConstraint = exact ? { exact: deviceId } : deviceId;
     if (kind === 'audioinput') {
+      needsUpdateWithoutTracks = this.localParticipant.audioTrackPublications.size === 0;
       const prevDeviceId =
         this.getActiveDevice(kind) ?? this.options.audioCaptureDefaults!.deviceId;
       this.options.audioCaptureDefaults!.deviceId = deviceConstraint;
-      deviceHasChanged = prevDeviceId !== deviceConstraint;
       const tracks = Array.from(this.localParticipant.audioTrackPublications.values()).filter(
         (track) => track.source === Track.Source.Microphone,
       );
@@ -1113,10 +1186,10 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
         throw e;
       }
     } else if (kind === 'videoinput') {
+      needsUpdateWithoutTracks = this.localParticipant.videoTrackPublications.size === 0;
       const prevDeviceId =
         this.getActiveDevice(kind) ?? this.options.videoCaptureDefaults!.deviceId;
       this.options.videoCaptureDefaults!.deviceId = deviceConstraint;
-      deviceHasChanged = prevDeviceId !== deviceConstraint;
       const tracks = Array.from(this.localParticipant.videoTrackPublications.values()).filter(
         (track) => track.source === Track.Source.Camera,
       );
@@ -1143,7 +1216,6 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
       this.options.audioOutput ??= {};
       const prevDeviceId = this.getActiveDevice(kind) ?? this.options.audioOutput.deviceId;
       this.options.audioOutput.deviceId = deviceId;
-      deviceHasChanged = prevDeviceId !== deviceConstraint;
 
       try {
         if (this.options.webAudioMix) {
@@ -1160,8 +1232,12 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
         throw e;
       }
     }
-    if (deviceHasChanged && success) {
-      this.localParticipant.activeDeviceMap.set(kind, deviceId);
+    if (needsUpdateWithoutTracks || kind === 'audiooutput') {
+      // if there are not active tracks yet or we're switching audiooutput, we need to manually update the active device map here as changing audio output won't result in a track restart
+      this.localParticipant.activeDeviceMap.set(
+        kind,
+        (kind === 'audiooutput' && this.options.audioOutput?.deviceId) || deviceId,
+      );
       this.emit(RoomEvent.ActiveDeviceChanged, kind, deviceId);
     }
 
@@ -1347,6 +1423,8 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
         if (shouldStopTracks) {
           pub.track?.detach();
           pub.track?.stop();
+        } else {
+          pub.track?.stopMonitor();
         }
       });
 
@@ -1563,8 +1641,125 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
       this.handleChatMessage(participant, packet.value.value);
     } else if (packet.value.case === 'metrics') {
       this.handleMetrics(packet.value.value, participant);
+    } else if (packet.value.case === 'streamHeader') {
+      this.handleStreamHeader(packet.value.value, packet.participantIdentity);
+    } else if (packet.value.case === 'streamChunk') {
+      this.handleStreamChunk(packet.value.value);
+    } else if (packet.value.case === 'streamTrailer') {
+      this.handleStreamTrailer(packet.value.value);
     }
   };
+
+  private async handleStreamHeader(streamHeader: DataStream_Header, participantIdentity: string) {
+    if (streamHeader.contentHeader.case === 'byteHeader') {
+      const streamHandlerCallback = this.byteStreamHandlers.get(streamHeader.topic);
+
+      if (!streamHandlerCallback) {
+        this.log.debug(
+          'ignoring incoming byte stream due to no handler for topic',
+          streamHeader.topic,
+        );
+        return;
+      }
+      let streamController: ReadableStreamDefaultController<DataStream_Chunk>;
+      const info: ByteStreamInfo = {
+        id: streamHeader.streamId,
+        name: streamHeader.contentHeader.value.name ?? 'unknown',
+        mimeType: streamHeader.mimeType,
+        size: streamHeader.totalLength ? Number(streamHeader.totalLength) : undefined,
+        topic: streamHeader.topic,
+        timestamp: bigIntToNumber(streamHeader.timestamp),
+        attributes: streamHeader.attributes,
+      };
+      const stream = new ReadableStream({
+        start: (controller) => {
+          streamController = controller;
+          this.byteStreamControllers.set(streamHeader.streamId, {
+            info,
+            controller: streamController,
+            startTime: Date.now(),
+          });
+        },
+      });
+      streamHandlerCallback(
+        new ByteStreamReader(info, stream, bigIntToNumber(streamHeader.totalLength)),
+        {
+          identity: participantIdentity,
+        },
+      );
+    } else if (streamHeader.contentHeader.case === 'textHeader') {
+      const streamHandlerCallback = this.textStreamHandlers.get(streamHeader.topic);
+
+      if (!streamHandlerCallback) {
+        this.log.debug(
+          'ignoring incoming text stream due to no handler for topic',
+          streamHeader.topic,
+        );
+        return;
+      }
+      let streamController: ReadableStreamDefaultController<DataStream_Chunk>;
+      const info: TextStreamInfo = {
+        id: streamHeader.streamId,
+        mimeType: streamHeader.mimeType,
+        size: streamHeader.totalLength ? Number(streamHeader.totalLength) : undefined,
+        topic: streamHeader.topic,
+        timestamp: Number(streamHeader.timestamp),
+        attributes: streamHeader.attributes,
+      };
+
+      const stream = new ReadableStream<DataStream_Chunk>({
+        start: (controller) => {
+          streamController = controller;
+          this.textStreamControllers.set(streamHeader.streamId, {
+            info,
+            controller: streamController,
+            startTime: Date.now(),
+          });
+        },
+      });
+      streamHandlerCallback(
+        new TextStreamReader(info, stream, bigIntToNumber(streamHeader.totalLength)),
+        { identity: participantIdentity },
+      );
+    }
+  }
+
+  private handleStreamChunk(chunk: DataStream_Chunk) {
+    const fileBuffer = this.byteStreamControllers.get(chunk.streamId);
+    if (fileBuffer) {
+      if (chunk.content.length > 0) {
+        fileBuffer.controller.enqueue(chunk);
+      }
+    }
+    const textBuffer = this.textStreamControllers.get(chunk.streamId);
+    if (textBuffer) {
+      if (chunk.content.length > 0) {
+        textBuffer.controller.enqueue(chunk);
+      }
+    }
+  }
+
+  private handleStreamTrailer(trailer: DataStream_Trailer) {
+    const textBuffer = this.textStreamControllers.get(trailer.streamId);
+
+    if (textBuffer) {
+      textBuffer.info.attributes = {
+        ...textBuffer.info.attributes,
+        ...trailer.attributes,
+      };
+      textBuffer.controller.close();
+      this.byteStreamControllers.delete(trailer.streamId);
+    }
+
+    const fileBuffer = this.byteStreamControllers.get(trailer.streamId);
+    if (fileBuffer) {
+      {
+        fileBuffer.info.attributes = { ...fileBuffer.info.attributes, ...trailer.attributes };
+        fileBuffer.controller.close();
+        this.byteStreamControllers.delete(trailer.streamId);
+      }
+    }
+  }
 
   private handleUserPacket = (
     participant: RemoteParticipant | undefined,
@@ -1648,13 +1843,54 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
   };
 
   private handleDeviceChange = async () => {
+    const previousDevices = DeviceManager.getInstance().previousDevices;
     // check for available devices, but don't request permissions in order to avoid prompts for kinds that haven't been used before
     const availableDevices = await DeviceManager.getInstance().getDevices(undefined, false);
+    const browser = getBrowser();
+    if (browser?.name === 'Chrome' && browser.os !== 'iOS') {
+      for (let availableDevice of availableDevices) {
+        const previousDevice = previousDevices.find(
+          (info) => info.deviceId === availableDevice.deviceId,
+        );
+        if (
+          previousDevice &&
+          previousDevice.label !== '' &&
+          previousDevice.kind === availableDevice.kind &&
+          previousDevice.label !== availableDevice.label
+        ) {
+          // label has changed on device the same deviceId, indicating that the default device has changed on the OS level
+          if (this.getActiveDevice(availableDevice.kind) === 'default') {
+            // emit an active device change event only if the selected output device is actually on `default`
+            this.emit(
+              RoomEvent.ActiveDeviceChanged,
+              availableDevice.kind,
+              availableDevice.deviceId,
+            );
+          }
+        }
+      }
+    }
+
     // inputs are automatically handled via TrackEvent.Ended causing a TrackEvent.Restarted. Here we only need to worry about audiooutputs changing
-    const kinds: MediaDeviceKind[] = ['audiooutput'];
+    const kinds: MediaDeviceKind[] = ['audiooutput', 'audioinput', 'videoinput'];
     for (let kind of kinds) {
-      // switch to first available device if previously active device is not available any more
       const devicesOfKind = availableDevices.filter((d) => d.kind === kind);
+      const activeDevice = this.getActiveDevice(kind);
+
+      if (activeDevice === previousDevices.filter((info) => info.kind === kind)[0]?.deviceId) {
+        // in  Safari the first device is always the default, so we assume a user on the default device would like to switch to the default once it changes
+        // FF doesn't emit an event when the default device changes, so we perform the same best effort and switch to the new device once connected and if it's the first in the array
+        if (devicesOfKind.length > 0 && devicesOfKind[0]?.deviceId !== activeDevice) {
+          await this.switchActiveDevice(kind, devicesOfKind[0].deviceId);
+          continue;
+        }
+      }
+
+      if ((kind === 'audioinput' && !isSafari()) || kind === 'videoinput') {
+        // airpods on Safari need special handling for audioinput as the track doesn't end as soon as you take them out
+        continue;
+      }
+      // switch to first available device if previously active device is not available any more
       if (
         devicesOfKind.length > 0 &&
         !devicesOfKind.find((deviceInfo) => deviceInfo.deviceId === this.getActiveDevice(kind))
@@ -1700,16 +1936,6 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
       this.audioContext = getNewAudioContext() ?? undefined;
     }
 
-    if (this.audioContext && this.audioContext.state === 'suspended') {
-      // for iOS a newly created AudioContext is always in `suspended` state.
-      // we try our best to resume the context here, if that doesn't work, we just continue with regular processing
-      try {
-        await this.audioContext.resume();
-      } catch (e: any) {
-        this.log.warn('Could not resume audio context', { ...this.logContext, error: e });
-      }
-    }
-
     if (this.options.webAudioMix) {
       this.remoteParticipants.forEach((participant) =>
         participant.setAudioContext(this.audioContext),
@@ -1717,6 +1943,16 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
     }
 
     this.localParticipant.setAudioContext(this.audioContext);
+
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      // for iOS a newly created AudioContext is always in `suspended` state.
+      // we try our best to resume the context here, if that doesn't work, we just continue with regular processing
+      try {
+        await Promise.race([this.audioContext.resume(), sleep(200)]);
+      } catch (e: any) {
+        this.log.warn('Could not resume audio context', { ...this.logContext, error: e });
+      }
+    }
 
     const newContextIsRunning = this.audioContext?.state === 'running';
     if (newContextIsRunning !== this.canPlaybackAudio) {
@@ -1733,10 +1969,18 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
         loggerName: this.options.loggerName,
       });
     } else {
-      participant = new RemoteParticipant(this.engine.client, '', identity, undefined, undefined, {
-        loggerContextCb: () => this.logContext,
-        loggerName: this.options.loggerName,
-      });
+      participant = new RemoteParticipant(
+        this.engine.client,
+        '',
+        identity,
+        undefined,
+        undefined,
+        undefined,
+        {
+          loggerContextCb: () => this.logContext,
+          loggerName: this.options.loggerName,
+        },
+      );
     }
     if (this.options.webAudioMix) {
       participant.setAudioContext(this.audioContext);
@@ -1798,9 +2042,6 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
           this.emit(RoomEvent.TrackUnsubscribed, track, publication, participant);
         },
       )
-      .on(ParticipantEvent.TrackSubscriptionFailed, (sid: string) => {
-        this.emit(RoomEvent.TrackSubscriptionFailed, sid, participant);
-      })
       .on(ParticipantEvent.TrackMuted, (pub: TrackPublication) => {
         this.emitWhenConnected(RoomEvent.TrackMuted, pub, participant);
       })
@@ -1871,7 +2112,7 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
   private updateSubscriptions() {
     for (const p of this.remoteParticipants.values()) {
       for (const pub of p.videoTrackPublications.values()) {
-        if (pub.isSubscribed && pub instanceof RemoteTrackPublication) {
+        if (pub.isSubscribed && isRemotePub(pub)) {
           pub.emitTrackUpdate();
         }
       }
@@ -1901,10 +2142,12 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
         this.log.warn('detected connection state mismatch', {
           ...this.logContext,
           numFailures: consecutiveFailures,
-          engine: {
-            closed: this.engine.isClosed,
-            transportsConnected: this.engine.verifyTransport(),
-          },
+          engine: this.engine
+            ? {
+                closed: this.engine.isClosed,
+                transportsConnected: this.engine.verifyTransport(),
+              }
+            : undefined,
         });
         if (consecutiveFailures >= 3) {
           this.recreateEngine();
@@ -1991,13 +2234,13 @@ class Room extends (EventEmitter as new () => TypedEmitter<RoomEventCallbacks>) 
 
     this.emit(RoomEvent.LocalTrackPublished, pub, this.localParticipant);
 
-    if (pub.track instanceof LocalAudioTrack) {
+    if (isLocalAudioTrack(pub.track)) {
       const trackIsSilent = await pub.track.checkForSilence();
       if (trackIsSilent) {
         this.emit(RoomEvent.LocalAudioSilenceDetected, pub);
       }
     }
-    const deviceId = await pub.track?.getDeviceId();
+    const deviceId = await pub.track?.getDeviceId(false);
     const deviceKind = sourceToKind(pub.source);
     if (
       deviceKind &&
@@ -2219,7 +2462,7 @@ function mapArgs(args: unknown[]): any {
       return mapArgs(arg);
     }
     if (typeof arg === 'object') {
-      return 'logContext' in arg && arg.logContext;
+      return 'logContext' in arg ? arg.logContext : undefined;
     }
     return arg;
   });

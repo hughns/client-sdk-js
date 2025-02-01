@@ -4,6 +4,12 @@ import {
   Codec,
   DataPacket,
   DataPacket_Kind,
+  DataStream_ByteHeader,
+  DataStream_Chunk,
+  DataStream_Header,
+  DataStream_OperationType,
+  DataStream_TextHeader,
+  DataStream_Trailer,
   Encryption_Type,
   ParticipantInfo,
   ParticipantPermission,
@@ -23,6 +29,7 @@ import {
 import type { InternalRoomOptions } from '../../options';
 import { PCTransportState } from '../PCTransportManager';
 import type RTCEngine from '../RTCEngine';
+import { TextStreamWriter } from '../StreamWriter';
 import { defaultVideoCodec } from '../defaults';
 import {
   DeviceUnsupportedError,
@@ -61,15 +68,26 @@ import {
   mimeTypeToVideoCodecString,
   screenCaptureToDisplayMediaStreamOptions,
 } from '../track/utils';
-import type { ChatMessage, DataPublishOptions } from '../types';
+import {
+  type ChatMessage,
+  type DataPublishOptions,
+  type SendTextOptions,
+  type TextStreamInfo,
+} from '../types';
 import {
   Future,
   compareVersions,
+  isAudioTrack,
   isE2EESimulcastSupported,
   isFireFox,
+  isLocalAudioTrack,
+  isLocalTrack,
+  isLocalVideoTrack,
   isSVCCodec,
   isSafari17,
+  isVideoTrack,
   isWeb,
+  numberToBigInt,
   sleep,
   supportsAV1,
   supportsVP9,
@@ -83,6 +101,8 @@ import {
   getDefaultDegradationPreference,
   mediaTrackToLocalTrack,
 } from './publishUtils';
+
+const STREAM_CHUNK_SIZE = 15_000;
 
 export default class LocalParticipant extends Participant {
   audioTrackPublications: Map<string, LocalTrackPublication>;
@@ -144,7 +164,7 @@ export default class LocalParticipant extends Participant {
 
   /** @internal */
   constructor(sid: string, identity: string, engine: RTCEngine, options: InternalRoomOptions) {
-    super(sid, identity, undefined, undefined, {
+    super(sid, identity, undefined, undefined, undefined, {
       loggerName: options.loggerName,
       loggerContextCb: () => this.engine.logContext,
     });
@@ -154,7 +174,11 @@ export default class LocalParticipant extends Participant {
     this.engine = engine;
     this.roomOptions = options;
     this.setupEngine(engine);
-    this.activeDeviceMap = new Map();
+    this.activeDeviceMap = new Map([
+      ['audioinput', 'default'],
+      ['videoinput', 'default'],
+      ['audiooutput', 'default'],
+    ]);
     this.pendingSignalRequests = new Map();
   }
 
@@ -486,6 +510,17 @@ export default class LocalParticipant extends Participant {
             default:
               throw new TrackInvalidError(source);
           }
+        } catch (e: unknown) {
+          localTracks?.forEach((tr) => {
+            tr.stop();
+          });
+          if (e instanceof Error) {
+            this.emit(ParticipantEvent.MediaDevicesError, e);
+          }
+          this.pendingPublishing.delete(source);
+          throw e;
+        }
+        try {
           const publishPromises: Array<Promise<LocalTrackPublication>> = [];
           for (const localTrack of localTracks) {
             this.log.info('publishing track', {
@@ -502,9 +537,6 @@ export default class LocalParticipant extends Participant {
           localTracks?.forEach((tr) => {
             tr.stop();
           });
-          if (e instanceof Error && !(e instanceof TrackInvalidError)) {
-            this.emit(ParticipantEvent.MediaDevicesError, e);
-          }
           throw e;
         } finally {
           this.pendingPublishing.delete(source);
@@ -629,9 +661,9 @@ export default class LocalParticipant extends Participant {
           track.setAudioContext(this.audioContext);
         }
         track.mediaStream = stream;
-        if (track instanceof LocalAudioTrack && audioProcessor) {
+        if (isAudioTrack(track) && audioProcessor) {
           await track.setProcessor(audioProcessor);
-        } else if (track instanceof LocalVideoTrack && videoProcessor) {
+        } else if (isVideoTrack(track) && videoProcessor) {
           await track.setProcessor(videoProcessor);
         }
         return track;
@@ -706,7 +738,7 @@ export default class LocalParticipant extends Participant {
     options?: TrackPublishOptions,
     isRepublish = false,
   ): Promise<LocalTrackPublication> {
-    if (track instanceof LocalAudioTrack) {
+    if (isLocalAudioTrack(track)) {
       track.setAudioContext(this.audioContext);
     }
 
@@ -714,7 +746,7 @@ export default class LocalParticipant extends Participant {
     if (this.republishPromise && !isRepublish) {
       await this.republishPromise;
     }
-    if (track instanceof LocalTrack && this.pendingPublishPromises.has(track)) {
+    if (isLocalTrack(track) && this.pendingPublishPromises.has(track)) {
       await this.pendingPublishPromises.get(track);
     }
     let defaultConstraints: MediaTrackConstraints | undefined;
@@ -846,7 +878,7 @@ export default class LocalParticipant extends Participant {
 
   private async publish(track: LocalTrack, opts: TrackPublishOptions, isStereo: boolean) {
     const existingTrackOfSource = Array.from(this.trackPublications.values()).find(
-      (publishedTrack) => track instanceof LocalTrack && publishedTrack.source === track.source,
+      (publishedTrack) => isLocalTrack(track) && publishedTrack.source === track.source,
     );
     if (existingTrackOfSource && track.source !== Track.Source.Unknown) {
       this.log.info(`publishing a second track with the same source: ${track.source}`, {
@@ -854,7 +886,7 @@ export default class LocalParticipant extends Participant {
         ...getLogContextFromTrack(track),
       });
     }
-    if (opts.stopMicTrackOnMute && track instanceof LocalAudioTrack) {
+    if (opts.stopMicTrackOnMute && isAudioTrack(track)) {
       track.stopOnMute = true;
     }
 
@@ -939,7 +971,7 @@ export default class LocalParticipant extends Participant {
       req.width = dims.width;
       req.height = dims.height;
       // for svc codecs, disable simulcast and use vp8 for backup codec
-      if (track instanceof LocalVideoTrack) {
+      if (isLocalVideoTrack(track)) {
         if (isSVCCodec(videoCodec)) {
           if (track.source === Track.Source.ScreenShare) {
             // vp9 svc with screenshare cannot encode multiple spatial layers
@@ -1025,7 +1057,7 @@ export default class LocalParticipant extends Participant {
 
       track.sender = await this.engine.createSender(track, opts, encodings);
 
-      if (track instanceof LocalVideoTrack) {
+      if (isLocalVideoTrack(track)) {
         opts.degradationPreference ??= getDefaultDegradationPreference(track);
         track.setDegradationPreference(opts.degradationPreference);
       }
@@ -1115,9 +1147,9 @@ export default class LocalParticipant extends Participant {
       trackInfo: ti,
     });
 
-    if (track instanceof LocalVideoTrack) {
+    if (isLocalVideoTrack(track)) {
       track.startMonitor(this.engine.client);
-    } else if (track instanceof LocalAudioTrack) {
+    } else if (isLocalAudioTrack(track)) {
       track.startMonitor();
     }
 
@@ -1158,7 +1190,7 @@ export default class LocalParticipant extends Participant {
       throw new TrackInvalidError('track is not published');
     }
 
-    if (!(track instanceof LocalVideoTrack)) {
+    if (!isLocalVideoTrack(track)) {
       throw new TrackInvalidError('track is not a video track');
     }
 
@@ -1225,7 +1257,7 @@ export default class LocalParticipant extends Participant {
     track: LocalTrack | MediaStreamTrack,
     stopOnUnpublish?: boolean,
   ): Promise<LocalTrackPublication | undefined> {
-    if (track instanceof LocalTrack) {
+    if (isLocalTrack(track)) {
       const publishPromise = this.pendingPublishPromises.get(track);
       if (publishPromise) {
         this.log.info('awaiting publish promise before attempting to unpublish', {
@@ -1266,6 +1298,8 @@ export default class LocalParticipant extends Participant {
     }
     if (stopOnUnpublish) {
       track.stop();
+    } else {
+      track.stopMonitor();
     }
 
     let negotiationNeeded = false;
@@ -1290,7 +1324,7 @@ export default class LocalParticipant extends Participant {
         if (this.engine.removeTrack(trackSender)) {
           negotiationNeeded = true;
         }
-        if (track instanceof LocalVideoTrack) {
+        if (isLocalVideoTrack(track)) {
           for (const [, trackInfo] of track.simulcastCodecs) {
             if (trackInfo.sender) {
               if (this.engine.removeTrack(trackInfo.sender)) {
@@ -1336,9 +1370,7 @@ export default class LocalParticipant extends Participant {
     tracks: LocalTrack[] | MediaStreamTrack[],
   ): Promise<LocalTrackPublication[]> {
     const results = await Promise.all(tracks.map((track) => this.unpublishTrack(track)));
-    return results.filter(
-      (track) => track instanceof LocalTrackPublication,
-    ) as LocalTrackPublication[];
+    return results.filter((track) => !!track);
   }
 
   async republishAllTracks(options?: TrackPublishOptions, restartTracks: boolean = true) {
@@ -1366,7 +1398,7 @@ export default class LocalParticipant extends Participant {
               !track.isMuted &&
               track.source !== Track.Source.ScreenShare &&
               track.source !== Track.Source.ScreenShareAudio &&
-              (track instanceof LocalAudioTrack || track instanceof LocalVideoTrack) &&
+              (isLocalAudioTrack(track) || isLocalVideoTrack(track)) &&
               !track.isUserProvided
             ) {
               // generally we need to restart the track before publishing, often a full reconnect
@@ -1440,11 +1472,12 @@ export default class LocalParticipant extends Participant {
     await this.engine.sendDataPacket(packet, DataPacket_Kind.RELIABLE);
   }
 
-  async sendChatMessage(text: string): Promise<ChatMessage> {
+  async sendChatMessage(text: string, options?: SendTextOptions): Promise<ChatMessage> {
     const msg = {
       id: crypto.randomUUID(),
       message: text,
       timestamp: Date.now(),
+      attachedFiles: options?.attachments,
     } as const satisfies ChatMessage;
     const packet = new DataPacket({
       value: {
@@ -1456,6 +1489,7 @@ export default class LocalParticipant extends Participant {
       },
     });
     await this.engine.sendDataPacket(packet, DataPacket_Kind.RELIABLE);
+
     this.emit(ParticipantEvent.ChatMessage, msg);
     return msg;
   }
@@ -1479,6 +1513,297 @@ export default class LocalParticipant extends Participant {
     await this.engine.sendDataPacket(packet, DataPacket_Kind.RELIABLE);
     this.emit(ParticipantEvent.ChatMessage, msg);
     return msg;
+  }
+
+  async sendText(text: string, options?: SendTextOptions): Promise<{ id: string }> {
+    const streamId = crypto.randomUUID();
+    const textInBytes = new TextEncoder().encode(text);
+    const totalTextLength = textInBytes.byteLength;
+    const totalTextChunks = Math.ceil(totalTextLength / STREAM_CHUNK_SIZE);
+
+    const fileIds = options?.attachments?.map(() => crypto.randomUUID());
+
+    const progresses = new Array<number>(fileIds ? fileIds.length + 1 : 1).fill(0);
+
+    const handleProgress = (progress: number, idx: number) => {
+      progresses[idx] = progress;
+      const totalProgress = progresses.reduce((acc, val) => acc + val, 0);
+      options?.onProgress?.(totalProgress);
+    };
+
+    const header = new DataStream_Header({
+      streamId,
+      totalLength: numberToBigInt(totalTextLength),
+      mimeType: 'text/plain',
+      topic: options?.topic,
+      timestamp: numberToBigInt(Date.now()),
+      contentHeader: {
+        case: 'textHeader',
+        value: new DataStream_TextHeader({
+          operationType: DataStream_OperationType.CREATE,
+          attachedStreamIds: fileIds,
+        }),
+      },
+    });
+
+    const destinationIdentities = options?.destinationIdentities;
+
+    const packet = new DataPacket({
+      destinationIdentities,
+      value: {
+        case: 'streamHeader',
+        value: header,
+      },
+    });
+
+    await this.engine.sendDataPacket(packet, DataPacket_Kind.RELIABLE);
+
+    for (let i = 0; i < totalTextChunks; i++) {
+      const chunkData = textInBytes.slice(
+        i * STREAM_CHUNK_SIZE,
+        Math.min((i + 1) * STREAM_CHUNK_SIZE, totalTextLength),
+      );
+      await this.engine.waitForBufferStatusLow(DataPacket_Kind.RELIABLE);
+      const chunk = new DataStream_Chunk({
+        content: chunkData,
+        streamId,
+        chunkIndex: numberToBigInt(i),
+      });
+      const chunkPacket = new DataPacket({
+        destinationIdentities,
+        value: {
+          case: 'streamChunk',
+          value: chunk,
+        },
+      });
+
+      await this.engine.sendDataPacket(chunkPacket, DataPacket_Kind.RELIABLE);
+      handleProgress(Math.ceil((i + 1) / totalTextChunks), 0);
+    }
+
+    const trailer = new DataStream_Trailer({
+      streamId,
+    });
+    const trailerPacket = new DataPacket({
+      destinationIdentities,
+      value: {
+        case: 'streamTrailer',
+        value: trailer,
+      },
+    });
+    await this.engine.sendDataPacket(trailerPacket, DataPacket_Kind.RELIABLE);
+
+    if (options?.attachments && fileIds) {
+      await Promise.all(
+        options.attachments.map(async (file, idx) =>
+          this._sendFile(fileIds[idx], file, {
+            topic: options.topic,
+            mimeType: file.type,
+            onProgress: (progress) => {
+              handleProgress(progress, idx + 1);
+            },
+          }),
+        ),
+      );
+    }
+    return { id: streamId };
+  }
+
+  /**
+   * @internal
+   * @experimental CAUTION, might get removed in a minor release
+   */
+  async streamText(options?: {
+    topic?: string;
+    destinationIdentities?: Array<string>;
+  }): Promise<TextStreamWriter> {
+    const streamId = crypto.randomUUID();
+
+    const info: TextStreamInfo = {
+      id: streamId,
+      mimeType: 'text/plain',
+      timestamp: Date.now(),
+      topic: options?.topic ?? '',
+    };
+    const header = new DataStream_Header({
+      streamId,
+      mimeType: info.mimeType,
+      topic: info.topic,
+      timestamp: numberToBigInt(info.timestamp),
+      contentHeader: {
+        case: 'textHeader',
+        value: new DataStream_TextHeader({
+          operationType: DataStream_OperationType.CREATE,
+        }),
+      },
+    });
+    const destinationIdentities = options?.destinationIdentities;
+    const packet = new DataPacket({
+      destinationIdentities,
+      value: {
+        case: 'streamHeader',
+        value: header,
+      },
+    });
+    await this.engine.sendDataPacket(packet, DataPacket_Kind.RELIABLE);
+
+    let chunkId = 0;
+    const localP = this;
+
+    const writableStream = new WritableStream<[string, number?]>({
+      // Implement the sink
+      write([textChunk]) {
+        const textInBytes = new TextEncoder().encode(textChunk);
+
+        if (textInBytes.byteLength > STREAM_CHUNK_SIZE) {
+          this.abort?.();
+          throw new Error('chunk size too large');
+        }
+
+        return new Promise(async (resolve) => {
+          await localP.engine.waitForBufferStatusLow(DataPacket_Kind.RELIABLE);
+          const chunk = new DataStream_Chunk({
+            content: textInBytes,
+            streamId,
+            chunkIndex: numberToBigInt(chunkId),
+          });
+          const chunkPacket = new DataPacket({
+            destinationIdentities,
+            value: {
+              case: 'streamChunk',
+              value: chunk,
+            },
+          });
+          await localP.engine.sendDataPacket(chunkPacket, DataPacket_Kind.RELIABLE);
+
+          chunkId += 1;
+          resolve();
+        });
+      },
+      async close() {
+        const trailer = new DataStream_Trailer({
+          streamId,
+        });
+        const trailerPacket = new DataPacket({
+          destinationIdentities,
+          value: {
+            case: 'streamTrailer',
+            value: trailer,
+          },
+        });
+        await localP.engine.sendDataPacket(trailerPacket, DataPacket_Kind.RELIABLE);
+      },
+      abort(err) {
+        console.log('Sink error:', err);
+        // TODO handle aborts to signal something to receiver side
+      },
+    });
+
+    let onEngineClose = async () => {
+      await writer.close();
+    };
+
+    localP.engine.once(EngineEvent.Closing, onEngineClose);
+
+    const writer = new TextStreamWriter(writableStream, info, () =>
+      this.engine.off(EngineEvent.Closing, onEngineClose),
+    );
+
+    return writer;
+  }
+
+  async sendFile(
+    file: File,
+    options?: {
+      mimeType?: string;
+      topic?: string;
+      destinationIdentities?: Array<string>;
+      onProgress?: (progress: number) => void;
+    },
+  ): Promise<{ id: string }> {
+    const streamId = crypto.randomUUID();
+    await this._sendFile(streamId, file, options);
+    return { id: streamId };
+  }
+
+  private async _sendFile(
+    streamId: string,
+    file: File,
+    options?: {
+      mimeType?: string;
+      topic?: string;
+      encryptionType?: Encryption_Type.NONE;
+      destinationIdentities?: Array<string>;
+      onProgress?: (progress: number) => void;
+    },
+  ) {
+    const totalLength = file.size;
+    const header = new DataStream_Header({
+      totalLength: numberToBigInt(totalLength),
+      mimeType: options?.mimeType ?? file.type,
+      streamId,
+      topic: options?.topic,
+      encryptionType: options?.encryptionType,
+      timestamp: numberToBigInt(Date.now()),
+      contentHeader: {
+        case: 'byteHeader',
+        value: new DataStream_ByteHeader({
+          name: file.name,
+        }),
+      },
+    });
+
+    const destinationIdentities = options?.destinationIdentities;
+    const packet = new DataPacket({
+      destinationIdentities,
+      value: {
+        case: 'streamHeader',
+        value: header,
+      },
+    });
+
+    await this.engine.sendDataPacket(packet, DataPacket_Kind.RELIABLE);
+    function read(b: Blob): Promise<Uint8Array> {
+      return new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          resolve(new Uint8Array(fr.result as ArrayBuffer));
+        };
+        fr.readAsArrayBuffer(b);
+      });
+    }
+    const totalChunks = Math.ceil(totalLength / STREAM_CHUNK_SIZE);
+    for (let i = 0; i < totalChunks; i++) {
+      const chunkData = await read(
+        file.slice(i * STREAM_CHUNK_SIZE, Math.min((i + 1) * STREAM_CHUNK_SIZE, totalLength)),
+      );
+      await this.engine.waitForBufferStatusLow(DataPacket_Kind.RELIABLE);
+      const chunk = new DataStream_Chunk({
+        content: chunkData,
+        streamId,
+        chunkIndex: numberToBigInt(i),
+      });
+      const chunkPacket = new DataPacket({
+        destinationIdentities,
+        value: {
+          case: 'streamChunk',
+          value: chunk,
+        },
+      });
+      await this.engine.sendDataPacket(chunkPacket, DataPacket_Kind.RELIABLE);
+      options?.onProgress?.((i + 1) / totalChunks);
+    }
+    const trailer = new DataStream_Trailer({
+      streamId,
+    });
+    const trailerPacket = new DataPacket({
+      destinationIdentities,
+      value: {
+        case: 'streamTrailer',
+        value: trailer,
+      },
+    });
+    await this.engine.sendDataPacket(trailerPacket, DataPacket_Kind.RELIABLE);
   }
 
   /**
@@ -1949,7 +2274,7 @@ export default class LocalParticipant extends Participant {
       this.unpublishTrack(track);
     } else if (track.isUserProvided) {
       await track.mute();
-    } else if (track instanceof LocalAudioTrack || track instanceof LocalVideoTrack) {
+    } else if (isLocalAudioTrack(track) || isLocalVideoTrack(track)) {
       try {
         if (isWeb()) {
           try {
@@ -1984,7 +2309,7 @@ export default class LocalParticipant extends Participant {
             ...this.logContext,
             ...getLogContextFromTrack(track),
           });
-          if (track instanceof LocalAudioTrack) {
+          if (isLocalAudioTrack(track)) {
             // fall back to default device if available
             await track.restartTrack({ deviceId: 'default' });
           } else {
@@ -2013,7 +2338,7 @@ export default class LocalParticipant extends Participant {
 
       // this looks overly complicated due to this object tree
       if (track instanceof MediaStreamTrack) {
-        if (localTrack instanceof LocalAudioTrack || localTrack instanceof LocalVideoTrack) {
+        if (isLocalAudioTrack(localTrack) || isLocalVideoTrack(localTrack)) {
           if (localTrack.mediaStreamTrack === track) {
             publication = <LocalTrackPublication>pub;
           }

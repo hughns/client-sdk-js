@@ -5,7 +5,7 @@ import DeviceManager from '../DeviceManager';
 import { DeviceUnsupportedError, TrackInvalidError } from '../errors';
 import { TrackEvent } from '../events';
 import type { LoggerOptions } from '../types';
-import { compareVersions, isMobile, sleep } from '../utils';
+import { compareVersions, isMobile, sleep, unwrapConstraint } from '../utils';
 import { Track, attachToElement, detachTrack } from './Track';
 import type { VideoCodec } from './options';
 import type { TrackProcessor } from './processor/types';
@@ -120,6 +120,10 @@ export default abstract class LocalTrack<
     return this.processor?.processedTrack ?? this._mediaStreamTrack;
   }
 
+  get isLocal() {
+    return true;
+  }
+
   /**
    * @internal
    * returns mediaStreamTrack settings of the capturing mediastreamtrack source - ignoring processors
@@ -179,7 +183,7 @@ export default abstract class LocalTrack<
         unlock();
       }
     }
-    if (this.sender) {
+    if (this.sender && this.sender.transport?.state !== 'closed') {
       await this.sender.replaceTrack(processedTrack ?? newTrack);
     }
     // if `newTrack` is different from the existing track, stop the
@@ -220,6 +224,28 @@ export default abstract class LocalTrack<
     }
     throw new TrackInvalidError('unable to get track dimensions after timeout');
   }
+
+  async setDeviceId(deviceId: ConstrainDOMString): Promise<boolean> {
+    if (
+      this._constraints.deviceId === deviceId &&
+      this._mediaStreamTrack.getSettings().deviceId === unwrapConstraint(deviceId)
+    ) {
+      return true;
+    }
+    this._constraints.deviceId = deviceId;
+
+    // when track is muted, underlying media stream track is stopped and
+    // will be restarted later
+    if (this.isMuted) {
+      return true;
+    }
+
+    await this.restartTrack();
+
+    return unwrapConstraint(deviceId) === this._mediaStreamTrack.getSettings().deviceId;
+  }
+
+  abstract restartTrack(constraints?: unknown): Promise<void>;
 
   /**
    * @returns DeviceID of the device that is currently being used for this track
@@ -424,7 +450,9 @@ export default abstract class LocalTrack<
         // https://bugs.webkit.org/show_bug.cgi?id=184911
         throw new DeviceUnsupportedError('pauseUpstream is not supported on Safari < 12.');
       }
-      await this.sender.replaceTrack(null);
+      if (this.sender.transport?.state !== 'closed') {
+        await this.sender.replaceTrack(null);
+      }
     } finally {
       unlock();
     }
@@ -443,8 +471,10 @@ export default abstract class LocalTrack<
       this._isUpstreamPaused = false;
       this.emit(TrackEvent.UpstreamResumed, this);
 
-      // this operation is noop if mediastreamtrack is already being sent
-      await this.sender.replaceTrack(this.mediaStreamTrack);
+      if (this.sender.transport?.state !== 'closed') {
+        // this operation is noop if mediastreamtrack is already being sent
+        await this.sender.replaceTrack(this.mediaStreamTrack);
+      }
     } finally {
       unlock();
     }
